@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 from __future__ import division
+import os, sys
+base_path = os.path.dirname(os.path.dirname(__file__))
+if not base_path in sys.path[:1]:
+    sys.path.insert(0, base_path)
+
 
 import logging
 import os
@@ -66,16 +71,11 @@ ALWAYS_MIDDLEWARE_CLASSES = (
 
 
 def get_test_modules():
-    from django.contrib.gis.tests.utils import HAS_SPATIAL_DB
     modules = []
     discovery_paths = [
         (None, RUNTESTS_DIR),
         (CONTRIB_MODULE_PATH, CONTRIB_DIR)
     ]
-    if HAS_SPATIAL_DB:
-        discovery_paths.append(
-            ('django.contrib.gis.tests', os.path.join(CONTRIB_DIR, 'gis', 'tests'))
-        )
 
     for modpath, dirpath in discovery_paths:
         for f in os.listdir(dirpath):

@@ -60,8 +60,7 @@ class QuerySet(object):
         self._prefetch_done = False
         self._known_related_objects = {}        # {rel_field, {pk: rel_obj}}
 
-        if not connection:
-            assert not settings.USING_GEVENT
+        assert connection or (not settings.USING_GEVENT)
         self.connection = connection
 
     def as_manager(cls):
@@ -881,12 +880,13 @@ class QuerySet(object):
         clone.query.add_immediate_loading(fields)
         return clone
 
-    def using(self, alias):
+    def using(self, alias, connection=None):
         """
         Selects which database this QuerySet should execute its query against.
         """
         clone = self._clone()
         clone._db = alias
+        clone.connection = connection
         return clone
 
     ###################################
@@ -917,7 +917,7 @@ class QuerySet(object):
     # PRIVATE METHODS #
     ###################
 
-    def _insert(self, objs, fields, return_id=False, raw=False, using=None):
+    def _insert(self, objs, fields, return_id=False, raw=False, using=None, connection=None):
         """
         Inserts a new record for the given model. This provides an interface to
         the InsertQuery class and is how Model.save() is implemented.
@@ -927,11 +927,11 @@ class QuerySet(object):
             using = self.db
         query = sql.InsertQuery(self.model)
         query.insert_values(fields, objs, raw=raw)
-        return query.get_compiler(using=using).execute_sql(return_id)
+        return query.get_compiler(using=using, connection=connection).execute_sql(return_id)
     _insert.alters_data = True
     _insert.queryset_only = False
 
-    def _batched_insert(self, objs, fields, batch_size):
+    def _batched_insert(self, objs, fields, batch_size, connection=None):
         """
         A little helper method for bulk_insert to insert the bulk one batch
         at a time. Inserts recursively a batch from the front of the bulk and
@@ -940,13 +940,13 @@ class QuerySet(object):
         if not objs:
             return
 
-        connection = self.connection or connections[self.db]
+        connection = connection or self.connection or connections[self.db]
         ops = connection.ops
         batch_size = (batch_size or max(ops.bulk_batch_size(fields, objs), 1))
         for batch in [objs[i:i + batch_size]
                       for i in range(0, len(objs), batch_size)]:
             self.model._base_manager._insert(batch, fields=fields,
-                                             using=self.db)
+                                             using=self.db, connection=connection)
 
     def _clone(self, klass=None, setup=False, **kwargs):
         if klass is None:
@@ -963,7 +963,7 @@ class QuerySet(object):
         query = self.query.clone()
         if self._sticky_filter:
             query.filter_is_sticky = True
-        c = klass(model=self.model, query=query, using=self._db, hints=self._hints)
+        c = klass(model=self.model, query=query, using=self._db, hints=self._hints, connection=self.connection)
         c._for_write = self._for_write
         c._prefetch_related_lookups = self._prefetch_related_lookups[:]
         c._known_related_objects = self._known_related_objects

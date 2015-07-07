@@ -15,7 +15,7 @@ from ssl import SSLError
 from django.core import mail
 from django.core.mail import (EmailMessage, mail_admins, mail_managers,
         EmailMultiAlternatives, send_mail, send_mass_mail)
-from django.core.mail.backends import console, dummy, locmem, filebased, smtp
+from django.core.mail.backends import console, dummy, filebased, smtp
 from django.core.mail.message import BadHeaderError
 from django.test import SimpleTestCase
 from django.test import override_settings
@@ -295,7 +295,6 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
     def test_backend_arg(self):
         """Test backend argument of mail.get_connection()"""
         self.assertIsInstance(mail.get_connection('django.core.mail.backends.smtp.EmailBackend'), smtp.EmailBackend)
-        self.assertIsInstance(mail.get_connection('django.core.mail.backends.locmem.EmailBackend'), locmem.EmailBackend)
         self.assertIsInstance(mail.get_connection('django.core.mail.backends.dummy.EmailBackend'), dummy.EmailBackend)
         self.assertIsInstance(mail.get_connection('django.core.mail.backends.console.EmailBackend'), console.EmailBackend)
         tmp_dir = tempfile.mkdtemp()
@@ -303,7 +302,6 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
             self.assertIsInstance(mail.get_connection('django.core.mail.backends.filebased.EmailBackend', file_path=tmp_dir), filebased.EmailBackend)
         finally:
             shutil.rmtree(tmp_dir)
-        self.assertIsInstance(mail.get_connection(), locmem.EmailBackend)
 
     @override_settings(
         EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
@@ -652,16 +650,6 @@ class LocmemBackendTests(BaseEmailBackendTests, SimpleTestCase):
         super(LocmemBackendTests, self).tearDown()
         mail.outbox = []
 
-    def test_locmem_shared_messages(self):
-        """
-        Make sure that the locmen backend populates the outbox.
-        """
-        connection = locmem.EmailBackend()
-        connection2 = locmem.EmailBackend()
-        email = EmailMessage('Subject', 'Content', 'bounce@example.com', ['to@example.com'], headers={'From': 'from@example.com'})
-        connection.send_messages([email])
-        connection2.send_messages([email])
-        self.assertEqual(len(mail.outbox), 2)
 
     def test_validate_multiline_headers(self):
         # Ticket #18861 - Validate emails when using the locmem backend

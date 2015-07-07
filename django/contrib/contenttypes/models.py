@@ -178,7 +178,8 @@ class ContentType(models.Model):
         method. The ObjectNotExist exception, if thrown, will not be caught,
         so code that calls this method should catch it.
         """
-        return self.model_class()._base_manager.using(self._state.db).get(**kwargs)
+        connection = kwargs.pop("connection", None)
+        return self.model_class()._base_manager.using(self._state.db, connection=connection).get(**kwargs)
 
     def get_all_objects_for_this_type(self, **kwargs):
         """

@@ -1,3 +1,4 @@
+# -*- coding:utf-8 -*-
 from importlib import import_module
 import os
 from optparse import make_option
@@ -9,6 +10,100 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, TestCase
 from django.test.utils import setup_test_environment, teardown_test_environment
 
+from colorama import init
+
+init()
+from colorama import Fore, Back, Style
+
+def traverse_test_suit(suit):
+    count = 0
+    for t in suit:
+        # 除了TestSuit和TestCase还可能有什么呢?
+        if isinstance(t, unittest.TestSuite):
+            count += traverse_test_suit(t)
+        elif isinstance(t, unittest.TestCase):
+            count += 1
+    return count
+
+def add_full_test_name_2_test(test, label):
+    """
+        suite_or_test:
+        可能为TestCase, 则需要为testcase添加一个test_name, base_package中已经包含了app, TestCase等信息，需要在最后面补充当前的Test的方法名
+    """
+    if isinstance(test, unittest.TestCase):
+        test.test_name = label
+def add_full_test_name_2_testsuit(suit, label):
+    if isinstance(suit, unittest.TestSuite):
+        for item in suit:
+            if isinstance(item, unittest.TestCase):
+                item.test_name = label + "." + item._testMethodName
+
+import time
+
+class CYTextTestResult(unittest.TextTestResult):
+    test_case_total_count = 0
+    no_slow_test = False
+
+    def __init__(self, stream, descriptions, verbosity):
+        super(CYTextTestResult, self).__init__(stream, descriptions, verbosity)
+        self.test_case_start_time = 0
+        self.test_start_time = 0
+        self.slows = []
+
+    def startTest(self, test):
+        super(CYTextTestResult, self).startTest(test)
+
+        global test_case_start_time
+
+        if self.testsRun == 1:
+            test_case_start_time = time.time()
+
+        self.test_start_time = time.time()
+
+        print (Fore.GREEN + "[%04d/%04d %4.1f%% T: %6.2fs]" % (self.testsRun, self.test_case_total_count,
+                                                               self.testsRun * 100 / max(1, self.test_case_total_count),
+                                                               time.time() - test_case_start_time) +
+               Fore.RESET + " : " + Fore.RED + str(test) + Fore.RESET)
+
+
+    def stopTest(self, test):
+        super(CYTextTestResult, self).stopTest(test)
+        elasped = time.time() - self.test_start_time
+
+        if elasped > 0.2:
+            self.slows.append((elasped, str(test)))
+
+    def printErrorList(self, flavour, errors):
+        """
+            最后汇总，输出测试的结果:
+        """
+        if not self.no_slow_test and self.slows:
+            self.slows.sort(reverse=True)
+            self.stream.writeln(Fore.MAGENTA + "------------------------------------------------------------------" + Fore.RESET)
+            index = 0
+            # 一次展示10个
+            for elapsed, test in self.slows[:10]:
+                index += 1
+                self.stream.writeln("SLOW-[%02d]: T: %.3fs --> %s" % (index, elapsed, test))
+                if index % 10 == 0:
+                    self.stream.writeln(Fore.GREEN + "------------------------------------------------------------------" + Fore.RESET)
+            self.stream.writeln(Fore.MAGENTA + "------------------------------------------------------------------" + Fore.RESET)
+            self.slows = []
+
+        for test, err in errors:
+            self.stream.writeln(self.separator1)
+            self.stream.writeln("%s: %s" % (flavour,self.getDescription(test)))
+            doc = ""
+            try:
+                if hasattr(test, "test_name"):
+                    doc = "./PYTHON.sh manage.py test --settings=settings-test " + test.test_name
+            except:
+                doc = test.__doc__ or ""
+            doc = doc.strip()
+            if doc:
+                self.stream.writeln(Fore.MAGENTA + "DOC: " + Fore.GREEN + doc + Fore.RESET);
+            self.stream.writeln(self.separator2)
+            self.stream.writeln("%s" % err)
 
 class DiscoverRunner(object):
     """
@@ -109,10 +204,18 @@ class DiscoverRunner(object):
         return setup_databases(self.verbosity, self.interactive, **kwargs)
 
     def run_suite(self, suite, **kwargs):
-        return self.test_runner(
-            verbosity=self.verbosity,
-            failfast=self.failfast,
-        ).run(suite)
+
+        # 准备做测试
+        total_count = traverse_test_suit(suite)
+
+        # 直接注入
+        CYTextTestResult.test_case_total_count = total_count
+        return unittest.TextTestRunner(verbosity=self.verbosity, failfast=self.failfast, resultclass=CYTextTestResult).run(suite)
+
+        # return self.test_runner(
+        #     verbosity=self.verbosity,
+        #     failfast=self.failfast,
+        # ).run(suite)
 
     def teardown_databases(self, old_config, **kwargs):
         """

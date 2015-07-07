@@ -1,3 +1,4 @@
+# -*- coding:utf-8 -*-
 """
 This module is pending deprecation as of Django 1.6 and will be removed in
 version 1.8.
@@ -226,6 +227,7 @@ def build_test(label):
 
     # Construct a suite out of the tests that matched.
     return unittest.TestSuite(tests)
+
 
 
 class DjangoTestSuiteRunner(runner.DiscoverRunner):
