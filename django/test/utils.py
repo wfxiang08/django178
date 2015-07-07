@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -
 from contextlib import contextmanager
 import logging
 import re
@@ -233,11 +234,17 @@ class override_settings(object):
             except Exception:
                 apps.unset_installed_apps()
                 raise
+
         override = UserSettingsHolder(settings._wrapped)
         for key, new_value in self.options.items():
             setattr(override, key, new_value)
+
+        # 保存原有的配置
         self.wrapped = settings._wrapped
+
+
         settings._wrapped = override
+
         for key, new_value in self.options.items():
             setting_changed.send(sender=settings._wrapped.__class__,
                                  setting=key, value=new_value, enter=True)

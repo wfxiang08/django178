@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -
 """
 Settings and configuration for Django.
 
@@ -148,7 +149,9 @@ class UserSettingsHolder(BaseSettings):
 
     def __getattr__(self, name):
         if name in self._deleted:
-            raise AttributeError
+            return super(UserSettingsHolder, self).__getattr__(name)
+            # raise AttributeError
+        # 为什么会有死循环呢?
         return getattr(self.default_settings, name)
 
     def __setattr__(self, name, value):
