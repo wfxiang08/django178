@@ -33,6 +33,8 @@ class BaseDatabaseWrapper(object):
     ops = None
     vendor = 'unknown'
 
+    connection_handler = None
+
     def __init__(self, settings_dict, alias=DEFAULT_DB_ALIAS,
                  allow_thread_sharing=False):
         # `settings_dict` should be a dictionary containing keys such as
@@ -84,6 +86,16 @@ class BaseDatabaseWrapper(object):
 
     def __hash__(self):
         return hash(self.alias)
+
+
+    # def __enter__(self):
+    #     pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.connection_handler:
+            self.connection_handler.close_connection(self)
+
+
 
     @property
     def queries_logged(self):

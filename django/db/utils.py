@@ -1,4 +1,5 @@
 # -*- coding:utf-8 -*-
+from collections import defaultdict
 from importlib import import_module
 import os
 import pkgutil
@@ -135,6 +136,7 @@ class ConnectionDoesNotExist(Exception):
     pass
 
 
+
 class ConnectionHandler(object):
     def __init__(self, databases=None):
         """
@@ -143,6 +145,8 @@ class ConnectionHandler(object):
         """
         self._databases = databases
         self._connections = local()  # TODO: Thread Local都转移到这儿了?
+
+        self.pooled_connections = defaultdict(list)
 
     @cached_property
     def databases(self):
@@ -239,24 +243,55 @@ class ConnectionHandler(object):
         for key in ['CHARSET', 'COLLATION', 'NAME', 'MIRROR']:
             test_settings.setdefault(key, None)
 
-    def get_connection(self, alias = None):
+    def _get_new_connection(self, alias):
         """
             创建一个数据库连接,
         """
-        alias = alias or DEFAULT_DB_ALIAS
 
         self.ensure_defaults(alias)
         self.prepare_test_settings(alias)
         db = self.databases[alias]
         backend = load_backend(db['ENGINE'])
 
-        #
-        # 创建一个connection
-        # 例如: django.db.backends.mysql.DatabaseWrapper
-        #
-        # TODO: conn是否需要cache, 不过底层的db是经过cache过的
         conn = backend.DatabaseWrapper(db, alias)
         return conn
+
+    def get_connection(self, alias=None):
+        """
+            获取一个独立的connection, 如果pool中不存在，则直接返回
+        """
+        alias = alias or DEFAULT_DB_ALIAS
+        connection_list = self.pooled_connections.get(alias)
+        if not connection_list:
+            connection = self._get_new_connection(alias)
+        else:
+            connection = connection_list.pop(0)
+
+        connection.connection_handler = self
+        return connection
+
+    def close_connection(self, connection):
+        """
+            关闭数据库
+        """
+        alias = connection.alias
+        connection_list = self.pooled_connections.get(alias)
+        # connection_list = []
+        max_conn = settings.ALIAS_2_MAX_CONNECT_NUM.get(alias, 10)
+
+        # 清空状态
+        from django.db import transaction
+        transaction.abort(connection)
+
+        # 关闭，或者归还到Pool中
+        connection.close()
+        connection.connection_handler = None
+
+        if len(connection_list) > max_conn:
+            pass
+        else:
+            connection_list.append(connection)
+
 
     def __getitem__(self, alias):
         if hasattr(self._connections, alias):

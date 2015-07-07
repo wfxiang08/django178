@@ -428,6 +428,11 @@ THOUSAND_SEPARATOR = ','
 
 USING_GEVENT = False
 
+# 最大连接数似乎没有什么特别的意义, 就是减少内存开销
+ALIAS_2_MAX_CONNECT_NUM = {
+    "default": 10
+}
+
 # Do you want to manage transactions manually?
 # Hint: you really don't!
 TRANSACTIONS_MANAGED = False
