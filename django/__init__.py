@@ -19,3 +19,11 @@ def setup():
 
     configure_logging(settings.LOGGING_CONFIG, settings.LOGGING)
     apps.populate(settings.INSTALLED_APPS)
+
+_gevent = None
+def using_gevent():
+    global _gevent
+    if _gevent is None:
+        from django.conf import settings
+        _gevent = settings.USING_GEVENT
+    return _gevent

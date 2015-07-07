@@ -16,12 +16,12 @@ or implicit commits or rollbacks.
 import warnings
 
 from functools import wraps
+from django import using_gevent
 
 from django.db import (
     connections, DEFAULT_DB_ALIAS,
     DatabaseError, Error, ProgrammingError)
 from django.utils.decorators import available_attrs
-from django.conf import settings
 from django.utils.deprecation import RemovedInDjango18Warning
 
 
@@ -41,7 +41,7 @@ def get_connection(using=None):
     Get a database connection by name, or the default database connection
     if no name is provided.
     """
-    assert not settings.USING_GEVENT
+    assert not using_gevent()
 
     if using is None:
         using = DEFAULT_DB_ALIAS
@@ -66,7 +66,7 @@ def abort(using=None, connection=None):
     if connection:
         connection.abort()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).abort()
 
 
@@ -83,7 +83,7 @@ def enter_transaction_management(managed=True, using=None, forced=False, connect
     if connection:
         connection.enter_transaction_management(managed, forced)
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).enter_transaction_management(managed, forced)
 
 
@@ -97,7 +97,7 @@ def leave_transaction_management(using=None, connection=None):
     if connection:
         connection.leave_transaction_management()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).leave_transaction_management()
 
 
@@ -109,7 +109,7 @@ def is_dirty(using=None, connection=None):
     if connection:
         connection.is_dirty()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).is_dirty()
 
 
@@ -122,7 +122,7 @@ def set_dirty(using=None, connection=None):
     if connection:
         connection.set_dirty()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).set_dirty()
 
 
@@ -135,7 +135,7 @@ def set_clean(using=None, connection=None):
     if connection:
         connection.set_clean()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).set_clean()
 
 
@@ -166,7 +166,7 @@ def get_autocommit(using=None, connection=None):
     if connection:
         connection.get_autocommit()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).get_autocommit()
 
 
@@ -177,7 +177,7 @@ def set_autocommit(autocommit, using=None, connection=None):
     if connection:
         connection.set_autocommit(autocommit)
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).set_autocommit(autocommit)
 
 
@@ -188,7 +188,7 @@ def commit(using=None, connection=None):
     if connection:
         connection.commit()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).commit()
 
 
@@ -199,7 +199,7 @@ def rollback(using=None, connection=None):
     if connection:
         connection.rollback()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).rollback()
 
 
@@ -212,7 +212,7 @@ def savepoint(using=None, connection=None):
     if connection:
         connection.savepoint()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).savepoint()
 
 
@@ -224,7 +224,7 @@ def savepoint_rollback(sid, using=None, connection=None):
     if connection:
         connection.savepoint_rollback(sid)
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).savepoint_rollback(sid)
 
 
@@ -236,7 +236,7 @@ def savepoint_commit(sid, using=None, connection=None):
     if connection:
         connection.savepoint_commit(sid)
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).savepoint_commit(sid)
 
 
@@ -247,7 +247,7 @@ def clean_savepoints(using=None, connection=None):
     if connection:
         connection.clean_savepoints()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         get_connection(using).clean_savepoints()
 
 
@@ -258,7 +258,7 @@ def get_rollback(using=None, connection=None):
     if connection:
         connection.get_rollback()
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).get_rollback()
 
 
@@ -277,7 +277,7 @@ def set_rollback(rollback, using=None, connection=None):
     if connection:
         connection.set_rollback(rollback)
     else:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return get_connection(using).set_rollback(rollback)
 
 
@@ -317,7 +317,7 @@ class Atomic(object):
         self.using = using
         self.savepoint = savepoint
 
-        assert connection or (not settings.USING_GEVENT)
+        assert connection or (not using_gevent())
         self.connection = connection
 
     def __enter__(self):
@@ -472,7 +472,7 @@ def atomic(using=None, savepoint=True, connection=None):
     # @atomic
     if callable(using):
         # 在使用gevent时，connection是动态获取的，因此不能直接使用 @atomic
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
         return Atomic(DEFAULT_DB_ALIAS, savepoint)(using)
     # Decorator: @atomic(...) or context manager: with atomic(...): ...
     else:
@@ -547,7 +547,7 @@ def _transaction_func(entering, exiting, using, connection=None):
     # are both allowed forms.
     # TODO:
     if not connection:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
 
     if using is None:
         using = DEFAULT_DB_ALIAS
@@ -567,7 +567,7 @@ def autocommit(using=None, connection=None):
 
     # 如果使用gevent, 则不允许直接使用 @autocommit
     if not connection:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
 
     def entering(using, connection = None):
         enter_transaction_management(managed=False, using=using, connection=connection)
@@ -587,7 +587,7 @@ def commit_on_success(using=None, connection=None):
     """
     warnings.warn("commit_on_success is deprecated in favor of atomic.", RemovedInDjango18Warning, stacklevel=2)
     if not connection:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
 
     def entering(using, connection=None):
         enter_transaction_management(using=using, connection=connection)
@@ -621,7 +621,7 @@ def commit_manually(using=None, connection=None):
         RemovedInDjango18Warning, stacklevel=2)
 
     if not connection:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
 
     def entering(using, connection):
         enter_transaction_management(using=using, connection=connection)
@@ -644,7 +644,7 @@ def commit_on_success_unless_managed(using=None, savepoint=False, connection=Non
     legacy behavior.
     """
     if not connection:
-        assert not settings.USING_GEVENT
+        assert not using_gevent()
 
     connection = connection or get_connection(using)
     if connection.get_autocommit() or connection.in_atomic_block:

@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 import copy
 import sys
 import warnings
+from django import using_gevent
 
 from django.apps import apps
 from django.apps.config import MODELS_MODULE_NAME
@@ -601,7 +602,7 @@ class Model(six.with_metaclass(ModelBase)):
         models and not to do any changes to the values before save. This
         is used by fixture loading.
         """
-        assert connection or (not settings.USING_GEVENT)
+        assert connection or (not using_gevent())
 
 
         # 选择数据库

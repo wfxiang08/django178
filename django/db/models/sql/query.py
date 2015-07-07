@@ -12,6 +12,7 @@ from itertools import count, product
 from collections import OrderedDict
 import copy
 import warnings
+from django import using_gevent
 
 from django.core.exceptions import FieldError
 from django.db import connections, DEFAULT_DB_ALIAS
@@ -225,7 +226,7 @@ class Query(object):
         return self
 
     def get_compiler(self, using=None, connection=None):
-        assert connection or (not settings.USING_GEVENT)
+        assert connection or (not using_gevent())
 
         if using is None and connection is None:
             raise ValueError("Need either using or connection")

@@ -5,6 +5,7 @@ The main QuerySet implementation. This provides the public API for the ORM.
 from collections import deque
 import copy
 import sys
+from django import using_gevent
 
 from django.conf import settings
 from django.core import exceptions
@@ -60,7 +61,7 @@ class QuerySet(object):
         self._prefetch_done = False
         self._known_related_objects = {}        # {rel_field, {pk: rel_obj}}
 
-        assert connection or (not settings.USING_GEVENT)
+        assert connection or (not using_gevent())
         self.connection = connection
 
     def as_manager(cls):
@@ -1444,7 +1445,7 @@ def get_cached_row(row, index_start, using, klass_info, offset=0,
     # connection interprets empty strings as nulls), then the related
     # object must be non-existent - set the relation to None.
 
-    assert connection or (not settings.USING_GEVENT)
+    assert connection or (not using_gevent())
     connection = connection or connections[using]
 
     if (fields[pk_idx] is None or
@@ -1535,7 +1536,7 @@ class RawQuerySet(object):
         self.params = params or ()
         self.translations = translations or {}
 
-        assert connection or not settings.USING_GEVENT
+        assert connection or not using_gevent()
         self.connection = connection
 
     def __iter__(self):
@@ -1548,7 +1549,7 @@ class RawQuerySet(object):
         annotation_fields = []
 
         # Cache some things for performance reasons outside the loop.
-        assert self.connection or (not settings.USING_GEVENT)
+        assert self.connection or (not using_gevent())
 
         db = self.db
         connection = self.connection or connections[db]
@@ -1663,7 +1664,7 @@ class RawQuerySet(object):
         A dict mapping column names to model field names.
         """
         if not hasattr(self, '_model_fields'):
-            assert self.connection or not settings.USING_GEVENT
+            assert self.connection or not using_gevent()
             connection = self.connection or connections[self.db]
             converter = connection.introspection.table_name_converter
             self._model_fields = {}
