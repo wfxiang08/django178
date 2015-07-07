@@ -94,6 +94,8 @@ class BaseDatabaseWrapper(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.connection_handler:
             self.connection_handler.close_connection(self)
+            self.connection_handler = None
+
 
 
     @property
