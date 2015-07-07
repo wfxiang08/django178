@@ -12,15 +12,14 @@ class ProtectedError(IntegrityError):
         super(ProtectedError, self).__init__(msg, protected_objects)
 
 
-def CASCADE(collector, field, sub_objs, using, connection=None):
+def CASCADE(collector, field, sub_objs, connection):
     collector.collect(sub_objs, source=field.rel.to,
                       source_attr=field.name, nullable=field.null)
-    connection = connection or connections[using]
     if field.null and not connection.features.can_defer_constraint_checks:
         collector.add_field_update(field, None, sub_objs)
 
 
-def PROTECT(collector, field, sub_objs, using):
+def PROTECT(collector, field, sub_objs):
     raise ProtectedError("Cannot delete some instances of model '%s' because "
         "they are referenced through a protected foreign key: '%s.%s'" % (
             field.rel.to.__name__, sub_objs[0].__class__.__name__, field.name
@@ -31,30 +30,29 @@ def PROTECT(collector, field, sub_objs, using):
 
 def SET(value):
     if callable(value):
-        def set_on_delete(collector, field, sub_objs, using):
+        def set_on_delete(collector, field, sub_objs):
             collector.add_field_update(field, value(), sub_objs)
     else:
-        def set_on_delete(collector, field, sub_objs, using):
+        def set_on_delete(collector, field, sub_objs):
             collector.add_field_update(field, value, sub_objs)
     set_on_delete.deconstruct = lambda: ('django.db.models.SET', (value,), {})
     return set_on_delete
 
 
-def SET_NULL(collector, field, sub_objs, using):
+def SET_NULL(collector, field, sub_objs):
     collector.add_field_update(field, None, sub_objs)
 
 
-def SET_DEFAULT(collector, field, sub_objs, using):
+def SET_DEFAULT(collector, field, sub_objs):
     collector.add_field_update(field, field.get_default(), sub_objs)
 
 
-def DO_NOTHING(collector, field, sub_objs, using):
+def DO_NOTHING(collector, field, sub_objs):
     pass
 
 
 class Collector(object):
-    def __init__(self, using, connection=None):
-        self.using = using
+    def __init__(self, connection):
         self.connection =  connection
 
         # Initially, {model: set([instances])}, later values become lists.
@@ -199,11 +197,11 @@ class Collector(object):
                 if self.can_fast_delete(sub_objs, from_field=field):
                     self.fast_deletes.append(sub_objs)
                 elif sub_objs:
-                    field.rel.on_delete(self, field, sub_objs, self.using)
+                    field.rel.on_delete(self, field, sub_objs, self.connection)
             for field in model._meta.virtual_fields:
                 if hasattr(field, 'bulk_related_objects'):
                     # Its something like generic foreign key.
-                    sub_objs = field.bulk_related_objects(new_objs, self.using)
+                    sub_objs = field.bulk_related_objects(new_objs, self.connection)
                     self.collect(sub_objs,
                                  source=model,
                                  source_attr=field.rel.related_name,
@@ -214,7 +212,7 @@ class Collector(object):
         Gets a QuerySet of objects related to ``objs`` via the relation ``related``.
 
         """
-        return related.model._base_manager.using(self.using).filter(
+        return related.model._base_manager.using(self.connection).filter(
             **{"%s__in" % related.field.name: objs}
         )
 
@@ -257,19 +255,19 @@ class Collector(object):
             for model, obj in self.instances_with_model():
                 if not model._meta.auto_created:
                     signals.pre_delete.send(
-                        sender=model, instance=obj, using=self.using
+                        sender=model, instance=obj, connection = self.connection
                     )
 
             # fast deletes
             for qs in self.fast_deletes:
-                qs._raw_delete(using=self.using)
+                qs._raw_delete(self.connection)
 
             # update fields
             for model, instances_for_fieldvalues in six.iteritems(self.field_updates):
                 query = sql.UpdateQuery(model)
                 for (field, value), instances in six.iteritems(instances_for_fieldvalues):
                     query.update_batch([obj.pk for obj in instances],
-                                       {field.name: value}, self.using)
+                                       {field.name: value}, self.connection)
 
             # reverse instance collections
             for instances in six.itervalues(self.data):
@@ -279,12 +277,12 @@ class Collector(object):
             for model, instances in six.iteritems(self.data):
                 query = sql.DeleteQuery(model)
                 pk_list = [obj.pk for obj in instances]
-                query.delete_batch(pk_list, self.using)
+                query.delete_batch(pk_list, self.connection)
 
                 if not model._meta.auto_created:
                     for obj in instances:
                         signals.post_delete.send(
-                            sender=model, instance=obj, using=self.using
+                            sender=model, instance=obj, connection = self.connection
                         )
 
         # update collected instances

@@ -27,12 +27,12 @@ class DeleteQuery(Query):
 
     compiler = 'SQLDeleteCompiler'
 
-    def do_query(self, table, where, using, connection=None):
+    def do_query(self, table, where, connection):
         self.tables = [table]
         self.where = where
-        self.get_compiler(using, connection=connection).execute_sql(NO_RESULTS)
+        self.get_compiler(connection).execute_sql(NO_RESULTS)
 
-    def delete_batch(self, pk_list, using, field=None, connection=None):
+    def delete_batch(self, pk_list, connection, field=None):
         """
         Set up and execute delete queries for all the objects in pk_list.
 
@@ -45,9 +45,9 @@ class DeleteQuery(Query):
             self.where = self.where_class()
             self.add_q(Q(
                 **{field.attname + '__in': pk_list[offset:offset + GET_ITERATOR_CHUNK_SIZE]}))
-            self.do_query(self.get_meta().db_table, self.where, using=using, connection=connection)
+            self.do_query(self.get_meta().db_table, self.where, connection=connection)
 
-    def delete_qs(self, query, using):
+    def delete_qs(self, query, connection):
         """
         Delete the queryset in one SQL query (if possible). For simple queries
         this is done by copying the query.query.where to self.query, for
@@ -67,13 +67,12 @@ class DeleteQuery(Query):
             self.where = innerq.where
         else:
             pk = query.model._meta.pk
-            connection = self.connection or connections[using]
             if not connection.features.update_can_self_select:
                 # We can't do the delete using subquery.
                 values = list(query.values_list('pk', flat=True))
                 if not values:
                     return
-                self.delete_batch(values, using, connection=connection)
+                self.delete_batch(values, connection)
                 return
             else:
                 innerq.clear_select_clause()
@@ -112,12 +111,12 @@ class UpdateQuery(Query):
         return super(UpdateQuery, self).clone(klass,
                 related_updates=self.related_updates.copy(), **kwargs)
 
-    def update_batch(self, pk_list, values, using):
+    def update_batch(self, pk_list, values, connection):
         self.add_update_values(values)
         for offset in range(0, len(pk_list), GET_ITERATOR_CHUNK_SIZE):
             self.where = self.where_class()
             self.add_q(Q(pk__in=pk_list[offset: offset + GET_ITERATOR_CHUNK_SIZE]))
-            self.get_compiler(using).execute_sql(NO_RESULTS)
+            self.get_compiler(connection).execute_sql(NO_RESULTS)
 
     def add_update_values(self, values):
         """

@@ -4,7 +4,6 @@ from __future__ import unicode_literals
 import copy
 import sys
 import warnings
-from django import using_gevent
 
 from django.apps import apps
 from django.apps.config import MODELS_MODULE_NAME
@@ -532,8 +531,7 @@ class Model(six.with_metaclass(ModelBase)):
             return getattr(self, field_name)
         return getattr(self, field.attname)
 
-    def save(self, force_insert=False, force_update=False, using=None,
-             update_fields=None, connection=None):
+    def save(self, connection, force_insert=False, force_update=False, update_fields=None):
         """
         Saves the current instance. Override this in a subclass if you want to
         control the saving process.
@@ -542,7 +540,6 @@ class Model(six.with_metaclass(ModelBase)):
         that the "save" must be an SQL insert or update (or equivalent for
         non-SQL backends), respectively. Normally, they should not be set.
         """
-        using = using or router.db_for_write(self.__class__, instance=self)
         if force_insert and (force_update or update_fields):
             raise ValueError("Cannot force both insert and updating in model saving.")
 
@@ -572,7 +569,7 @@ class Model(six.with_metaclass(ModelBase)):
 
         # If saving to the same database, and this model is deferred, then
         # automatically do a "update_fields" save on the loaded fields.
-        elif not force_insert and self._deferred and using == self._state.db:
+        elif not force_insert and self._deferred:
             field_names = set()
             for field in self._meta.concrete_fields:
                 if not field.primary_key and not hasattr(field, 'through'):
@@ -587,12 +584,12 @@ class Model(six.with_metaclass(ModelBase)):
             if loaded_fields:
                 update_fields = frozenset(loaded_fields)
 
-        self.save_base(using=using, force_insert=force_insert,
-                       force_update=force_update, update_fields=update_fields, connection=connection)
+        self.save_base(connection, force_insert=force_insert,
+                       force_update=force_update, update_fields=update_fields)
     save.alters_data = True
 
-    def save_base(self, raw=False, force_insert=False,
-                  force_update=False, using=None, update_fields=None, connection=None):
+    def save_base(self, connection, raw=False, force_insert=False,
+                  force_update=False,  update_fields=None):
         """
         Handles the parts of saving which should be done only once per save,
         yet need to be done in raw saves, too. This includes some sanity
@@ -602,12 +599,6 @@ class Model(six.with_metaclass(ModelBase)):
         models and not to do any changes to the values before save. This
         is used by fixture loading.
         """
-        assert connection or (not using_gevent())
-
-
-        # 选择数据库
-        if not connection:
-            using = using or router.db_for_write(self.__class__, instance=self)
 
         assert not (force_insert and (force_update or update_fields))
         assert update_fields is None or len(update_fields) > 0
@@ -619,17 +610,15 @@ class Model(six.with_metaclass(ModelBase)):
 
         # 2. pre_save
         if not meta.auto_created:
-            signals.pre_save.send(sender=origin, instance=self, raw=raw, using=using,
+            signals.pre_save.send(sender=origin, instance=self, raw=raw, connection=connection,
                                   update_fields=update_fields)
 
         # 3. 保存数据
-        with transaction.commit_on_success_unless_managed(using=using, savepoint=False, connection=connection):
+        with transaction.commit_on_success_unless_managed(savepoint=False, connection=connection):
             if not raw:
-                self._save_parents(cls, using, update_fields, connection=connection)
-            updated = self._save_table(raw, cls, force_insert, force_update, using, update_fields, connection=connection)
+                self._save_parents(cls, update_fields, connection=connection)
+            updated = self._save_table(raw, cls, force_insert, force_update, update_fields, connection=connection)
 
-        # Store the database on which the object was saved
-        self._state.db = using
         # Once saved, this is no longer a to-be-added instance.
         self._state.adding = False
 
@@ -637,11 +626,11 @@ class Model(six.with_metaclass(ModelBase)):
         # Signal that the save is complete
         if not meta.auto_created:
             signals.post_save.send(sender=origin, instance=self, created=(not updated),
-                                   update_fields=update_fields, raw=raw, using=using, connection=connection)
+                                   update_fields=update_fields, raw=raw, connection=connection)
 
     save_base.alters_data = True
 
-    def _save_parents(self, cls, using, update_fields, connection=None):
+    def _save_parents(self, cls, connection, update_fields):
         """
         Saves all the parents of cls using values from self.
         """
@@ -651,8 +640,8 @@ class Model(six.with_metaclass(ModelBase)):
             if (field and getattr(self, parent._meta.pk.attname) is None
                     and getattr(self, field.attname) is not None):
                 setattr(self, parent._meta.pk.attname, getattr(self, field.attname))
-            self._save_parents(cls=parent, using=using, update_fields=update_fields, connection=connection)
-            self._save_table(cls=parent, using=using, update_fields=update_fields, connection=connection)
+            self._save_parents(cls=parent, update_fields=update_fields, connection=connection)
+            self._save_table(cls=parent, update_fields=update_fields, connection=connection)
             # Set the parent's PK value to self.
             if field:
                 setattr(self, field.attname, self._get_pk_val(parent._meta))
@@ -665,8 +654,8 @@ class Model(six.with_metaclass(ModelBase)):
                 if hasattr(self, cache_name):
                     delattr(self, cache_name)
 
-    def _save_table(self, raw=False, cls=None, force_insert=False,
-                    force_update=False, using=None, update_fields=None, connection=None):
+    def _save_table(self, connection, raw=False, cls=None, force_insert=False,
+                    force_update=False, update_fields=None):
         """
         Does the heavy-lifting involved in saving. Updates or inserts the data
         for a single table.
@@ -685,12 +674,12 @@ class Model(six.with_metaclass(ModelBase)):
         updated = False
         # If possible, try an UPDATE. If that doesn't update anything, do an INSERT.
         if pk_set and not force_insert:
-            base_qs = cls._base_manager.using(using, connection=connection)
+            base_qs = cls._base_manager.using(connection)
             values = [(f, None, (getattr(self, f.attname) if raw else f.pre_save(self, False)))
                       for f in non_pks]
             forced_update = update_fields or force_update
-            updated = self._do_update(base_qs, using, pk_val, values, update_fields,
-                                      forced_update, connection=connection)
+            updated = self._do_update(base_qs, connection, pk_val, values, update_fields,
+                                      forced_update)
             if force_update and not updated:
                 raise DatabaseError("Forced update did not affect any rows.")
             if update_fields and not updated:
@@ -700,7 +689,7 @@ class Model(six.with_metaclass(ModelBase)):
                 # If this is a model with an order_with_respect_to
                 # autopopulate the _order field
                 field = meta.order_with_respect_to
-                order_value = cls._base_manager.using(using, connection=connection).filter(
+                order_value = cls._base_manager.using(connection).filter(
                     **{field.name: getattr(self, field.attname)}).count()
                 self._order = order_value
 
@@ -709,12 +698,12 @@ class Model(six.with_metaclass(ModelBase)):
                 fields = [f for f in fields if not isinstance(f, AutoField)]
 
             update_pk = bool(meta.has_auto_field and not pk_set)
-            result = self._do_insert(cls._base_manager, using, fields, update_pk, raw, connection=connection)
+            result = self._do_insert(cls._base_manager, connection, fields, update_pk, raw)
             if update_pk:
                 setattr(self, meta.pk.attname, result)
         return updated
 
-    def _do_update(self, base_qs, using, pk_val, values, update_fields, forced_update, connection=None):
+    def _do_update(self, base_qs, connection, pk_val, values, update_fields, forced_update):
         """
         This method will try to update the model. If the model was updated (in
         the sense that an update query was done and a matching row was found
@@ -736,19 +725,17 @@ class Model(six.with_metaclass(ModelBase)):
                 return False
         return filtered._update(values) > 0
 
-    def _do_insert(self, manager, using, fields, update_pk, raw, connection=None):
+    def _do_insert(self, manager, connection, fields, update_pk, raw):
         """
         Do an INSERT. If update_pk is defined then this method should return
         the new pk for the model.
         """
-        return manager._insert([self], fields=fields, return_id=update_pk,
-                               using=using, raw=raw, connection=connection)
+        return manager._insert([self], fields=fields, return_id=update_pk, raw=raw, connection=connection)
 
-    def delete(self, using=None, connection=None):
-        using = using or router.db_for_write(self.__class__, instance=self)
+    def delete(self, connection):
         assert self._get_pk_val() is not None, "%s object can't be deleted because its %s attribute is set to None." % (self._meta.object_name, self._meta.pk.attname)
 
-        collector = Collector(using=using, connection=None)
+        collector = Collector(connection)
         collector.collect([self])
         collector.delete()
 
@@ -1436,14 +1423,13 @@ class Model(six.with_metaclass(ModelBase)):
 
 # ORDERING METHODS #########################
 
-def method_set_order(ordered_obj, self, id_list, using=None, connection=None):
-    if using is None:
-        using = DEFAULT_DB_ALIAS
+def method_set_order(ordered_obj, self, id_list, connection):
+
     rel_val = getattr(self, ordered_obj._meta.order_with_respect_to.rel.field_name)
     order_name = ordered_obj._meta.order_with_respect_to.name
     # FIXME: It would be nice if there was an "update many" version of update
     # for situations like this.
-    with transaction.commit_on_success_unless_managed(using=using, connection=connection):
+    with transaction.commit_on_success_unless_managed(connection):
         for i, j in enumerate(id_list):
             ordered_obj.objects.filter(**{'pk': j, order_name: rel_val}).update(_order=i)
 

@@ -162,9 +162,8 @@ class BaseManager(six.with_metaclass(RenameManagerMethods)):
         mgr._inherited = True
         return mgr
 
-    def db_manager(self, using=None, hints=None, connection=None):
+    def db_manager(self, connection, hints=None):
         obj = copy.copy(self)
-        obj._db = using or self._db
         obj._hints = hints or self._hints
         obj._connection = connection
         return obj
@@ -182,7 +181,7 @@ class BaseManager(six.with_metaclass(RenameManagerMethods)):
         Returns a new QuerySet object.  Subclasses can override this method to
         easily customize the behavior of the Manager.
         """
-        return self._queryset_class(self.model, using=self._db, hints=self._hints, connection=self._connection)
+        return self._queryset_class(self.model, connection=self._connection, hints=self._hints)
 
     def all(self):
         # We can't proxy this method through the `QuerySet` like we do for the

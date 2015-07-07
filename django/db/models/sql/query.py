@@ -225,19 +225,15 @@ class Query(object):
     def prepare(self):
         return self
 
-    def get_compiler(self, using=None, connection=None):
-        assert connection or (not using_gevent())
-
-        if using is None and connection is None:
+    def get_compiler(self, connection):
+        if not connection:
             raise ValueError("Need either using or connection")
-
-        connection = connection or connections[using]
 
         # Check that the compiler will be able to execute the query
         for alias, aggregate in self.aggregate_select.items():
             connection.ops.check_aggregate_support(aggregate)
 
-        return connection.ops.compiler(self.compiler)(self, connection, using)
+        return connection.ops.compiler(self.compiler)(self, connection)
 
     def get_meta(self):
         """
@@ -457,13 +453,13 @@ class Query(object):
     def has_filters(self):
         return self.where or self.having
 
-    def has_results(self, using):
+    def has_results(self, connection):
         q = self.clone()
         if not q.distinct:
             q.clear_select_clause()
         q.clear_ordering(True)
         q.set_limits(high=1)
-        compiler = q.get_compiler(using=using)
+        compiler = q.get_compiler(connection)
         return compiler.has_results()
 
     def combine(self, rhs, connector):

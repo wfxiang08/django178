@@ -19,10 +19,9 @@ from django.utils import timezone
 
 
 class SQLCompiler(object):
-    def __init__(self, query, connection, using):
+    def __init__(self, query, connection):
         self.query = query
         self.connection = connection
-        self.using = using
         self.quote_cache = {'*': '*'}
         # When ordering a queryset with distinct on a column not part of the
         # select set, the ordering column needs to be added to the select
@@ -1010,7 +1009,7 @@ class SQLUpdateCompiler(SQLCompiler):
             if cursor:
                 cursor.close()
         for query in self.query.get_related_updates():
-            aux_rows = query.get_compiler(self.using).execute_sql(result_type)
+            aux_rows = query.get_compiler(self.connection).execute_sql(result_type)
             if is_empty and aux_rows:
                 rows = aux_rows
                 is_empty = False
@@ -1055,7 +1054,7 @@ class SQLUpdateCompiler(SQLCompiler):
             # don't want them to change), or the db backend doesn't support
             # selecting from the updating table (e.g. MySQL).
             idents = []
-            for rows in query.get_compiler(self.using).execute_sql(MULTI):
+            for rows in query.get_compiler(self.connection).execute_sql(MULTI):
                 idents.extend(r[0] for r in rows)
             self.query.add_filter(('pk__in', idents))
             self.query.related_ids = idents

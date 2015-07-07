@@ -16,11 +16,8 @@ or implicit commits or rollbacks.
 import warnings
 
 from functools import wraps
-from django import using_gevent
 
-from django.db import (
-    connections, DEFAULT_DB_ALIAS,
-    DatabaseError, Error, ProgrammingError)
+from django.db import (DatabaseError, Error, ProgrammingError)
 from django.utils.decorators import available_attrs
 from django.utils.deprecation import RemovedInDjango18Warning
 
@@ -36,23 +33,12 @@ class TransactionManagementError(ProgrammingError):
 # Private APIs #
 ################
 
-def get_connection(using=None):
-    """
-    Get a database connection by name, or the default database connection
-    if no name is provided.
-    """
-    assert not using_gevent()
-
-    if using is None:
-        using = DEFAULT_DB_ALIAS
-    return connections[using]
-
 
 ###########################
 # Deprecated private APIs #
 ###########################
 
-def abort(using=None, connection=None):
+def abort(connection):
     """
     Roll back any ongoing transactions and clean the transaction management
     state of the connection.
@@ -63,14 +49,10 @@ def abort(using=None, connection=None):
     must be cleaned up for the next request.
     """
     # 清空状态
-    if connection:
-        connection.abort()
-    else:
-        assert not using_gevent()
-        get_connection(using).abort()
+    connection.abort()
 
 
-def enter_transaction_management(managed=True, using=None, forced=False, connection=None):
+def enter_transaction_management(connection, managed=True, forced=False):
     """
     Enters transaction management for a running thread. It must be balanced with
     the appropriate leave_transaction_management call, since the actual state is
@@ -80,78 +62,58 @@ def enter_transaction_management(managed=True, using=None, forced=False, connect
     from the settings, if there is no surrounding block (dirty is always false
     when no current block is running).
     """
-    if connection:
-        connection.enter_transaction_management(managed, forced)
-    else:
-        assert not using_gevent()
-        get_connection(using).enter_transaction_management(managed, forced)
+    connection.enter_transaction_management(managed, forced)
 
 
 
-def leave_transaction_management(using=None, connection=None):
+def leave_transaction_management(connection):
     """
     Leaves transaction management for a running thread. A dirty flag is carried
     over to the surrounding block, as a commit will commit all changes, even
     those from outside. (Commits are on connection level.)
     """
-    if connection:
-        connection.leave_transaction_management()
-    else:
-        assert not using_gevent()
-        get_connection(using).leave_transaction_management()
+    connection.leave_transaction_management()
 
 
-def is_dirty(using=None, connection=None):
+def is_dirty(connection):
     """
     Returns True if the current transaction requires a commit for changes to
     happen.
     """
-    if connection:
-        connection.is_dirty()
-    else:
-        assert not using_gevent()
-        return get_connection(using).is_dirty()
+    connection.is_dirty()
 
 
-def set_dirty(using=None, connection=None):
+def set_dirty(connection):
     """
     Sets a dirty flag for the current thread and code streak. This can be used
     to decide in a managed block of code to decide whether there are open
     changes waiting for commit.
     """
-    if connection:
-        connection.set_dirty()
-    else:
-        assert not using_gevent()
-        get_connection(using).set_dirty()
+    connection.set_dirty()
 
 
-def set_clean(using=None, connection=None):
+def set_clean(connection):
     """
     Resets a dirty flag for the current thread and code streak. This can be used
     to decide in a managed block of code to decide whether a commit or rollback
     should happen.
     """
-    if connection:
-        connection.set_clean()
-    else:
-        assert not using_gevent()
-        get_connection(using).set_clean()
+    connection.set_clean()
 
 
-def is_managed(using=None, connection=None):
+def is_managed(connection):
     warnings.warn("'is_managed' is deprecated.", RemovedInDjango18Warning, stacklevel=2)
 
 
-def managed(flag=True, using=None, connection=None):
+def managed(flag=True, connection = None):
     warnings.warn("'managed' no longer serves a purpose.",RemovedInDjango18Warning, stacklevel=2)
 
 
-def commit_unless_managed(using=None, connection=None):
+def commit_unless_managed(connection):
     warnings.warn("'commit_unless_managed' is now a no-op.", RemovedInDjango18Warning, stacklevel=2)
 
 
-def rollback_unless_managed(using=None, connection=None):
+def rollback_unless_managed(connection):
     warnings.warn("'rollback_unless_managed' is now a no-op.",RemovedInDjango18Warning, stacklevel=2)
 
 
@@ -159,121 +121,76 @@ def rollback_unless_managed(using=None, connection=None):
 # Public APIs #
 ###############
 
-def get_autocommit(using=None, connection=None):
+def get_autocommit(connection):
     """
     Get the autocommit status of the connection.
     """
-    if connection:
-        connection.get_autocommit()
-    else:
-        assert not using_gevent()
-        return get_connection(using).get_autocommit()
+    connection.get_autocommit()
 
 
-def set_autocommit(autocommit, using=None, connection=None):
+def set_autocommit(autocommit, connection):
     """
     Set the autocommit status of the connection.
     """
     # set_autocommit(True, connection)
-    from django.db.backends import BaseDatabaseWrapper
-    if isinstance(using, BaseDatabaseWrapper):
-        connection = using
-        using = None
 
-    if connection:
-        connection.set_autocommit(autocommit)
-    else:
-        assert not using_gevent()
-        return get_connection(using).set_autocommit(autocommit)
+    connection.set_autocommit(autocommit)
 
 
-def commit(using=None, connection=None):
+def commit(connection):
     """
     Commits a transaction and resets the dirty flag.
     """
-    from django.db.backends import BaseDatabaseWrapper
-    if isinstance(using, BaseDatabaseWrapper):
-        connection = using
-        using = None
-
-    if connection:
-        connection.commit()
-    else:
-        assert not using_gevent()
-        get_connection(using).commit()
+    connection.commit()
 
 
-def rollback(using=None, connection=None):
+def rollback(connection):
     """
     Rolls back a transaction and resets the dirty flag.
     """
-    if connection:
-        connection.rollback()
-    else:
-        assert not using_gevent()
-        get_connection(using).rollback()
+    connection.rollback()
 
 
-def savepoint(using=None, connection=None):
+def savepoint(connection):
     """
     Creates a savepoint (if supported and required by the backend) inside the
     current transaction. Returns an identifier for the savepoint that will be
     used for the subsequent rollback or commit.
     """
-    if connection:
-        connection.savepoint()
-    else:
-        assert not using_gevent()
-        return get_connection(using).savepoint()
+    connection.savepoint()
 
 
-def savepoint_rollback(sid, using=None, connection=None):
+def savepoint_rollback(sid, connection):
     """
     Rolls back the most recent savepoint (if one exists). Does nothing if
     savepoints are not supported.
     """
-    if connection:
-        connection.savepoint_rollback(sid)
-    else:
-        assert not using_gevent()
-        get_connection(using).savepoint_rollback(sid)
+    connection.savepoint_rollback(sid)
 
 
-def savepoint_commit(sid, using=None, connection=None):
+def savepoint_commit(sid, connection):
     """
     Commits the most recent savepoint (if one exists). Does nothing if
     savepoints are not supported.
     """
-    if connection:
-        connection.savepoint_commit(sid)
-    else:
-        assert not using_gevent()
-        get_connection(using).savepoint_commit(sid)
+    connection.savepoint_commit(sid)
 
 
-def clean_savepoints(using=None, connection=None):
+def clean_savepoints(connection):
     """
     Resets the counter used to generate unique savepoint ids in this thread.
     """
-    if connection:
-        connection.clean_savepoints()
-    else:
-        assert not using_gevent()
-        get_connection(using).clean_savepoints()
+    connection.clean_savepoints()
 
 
-def get_rollback(using=None, connection=None):
+def get_rollback(connection):
     """
     Gets the "needs rollback" flag -- for *advanced use* only.
     """
-    if connection:
-        connection.get_rollback()
-    else:
-        assert not using_gevent()
-        return get_connection(using).get_rollback()
+    connection.get_rollback()
 
 
-def set_rollback(rollback, using=None, connection=None):
+def set_rollback(rollback, connection):
     """
     Sets or unsets the "needs rollback" flag -- for *advanced use* only.
 
@@ -285,11 +202,7 @@ def set_rollback(rollback, using=None, connection=None):
     after rolling back to a known-good state! Otherwise, you break the atomic
     block and data corruption may occur.
     """
-    if connection:
-        connection.set_rollback(rollback)
-    else:
-        assert not using_gevent()
-        return get_connection(using).set_rollback(rollback)
+    connection.set_rollback(rollback)
 
 
 #################################
@@ -324,15 +237,12 @@ class Atomic(object):
     Since database connections are thread-local, this is thread-safe.
     """
 
-    def __init__(self, using, savepoint, connection=None):
-        self.using = using
+    def __init__(self, connection, savepoint):
         self.savepoint = savepoint
-
-        assert connection or (not using_gevent())
         self.connection = connection
 
     def __enter__(self):
-        connection = self.connection or get_connection(self.using)
+        connection = self.connection
 
         if not connection.in_atomic_block:
             # Reset state when entering an outermost atomic block.
@@ -385,7 +295,7 @@ class Atomic(object):
             connection.in_atomic_block = True
 
     def __exit__(self, exc_type, exc_value, traceback):
-        connection = self.connection or get_connection(self.using)
+        connection = self.connection
 
         if connection.savepoint_ids:
             sid = connection.savepoint_ids.pop()
@@ -476,36 +386,20 @@ class Atomic(object):
         return inner
 
 # TODO:
-def atomic(using=None, savepoint=True, connection=None):
+def atomic(connection=None, savepoint=True):
     # Bare decorator: @atomic -- although the first argument is called
     # `using`, it's actually the function being decorated.
 
     # @atomic
-    if callable(using):
+    if callable(connection):
         # 在使用gevent时，connection是动态获取的，因此不能直接使用 @atomic
-        assert not using_gevent()
-        return Atomic(DEFAULT_DB_ALIAS, savepoint)(using)
+        assert False
+        # return Atomic(DEFAULT_DB_ALIAS, savepoint)(using)
     # Decorator: @atomic(...) or context manager: with atomic(...): ...
     else:
         # with atomic(conneciton=xxx)
-        return Atomic(using, savepoint, connection=connection)
+        return Atomic(connection, savepoint)
 
-# TODO:
-def _non_atomic_requests(view, using):
-    try:
-        view._non_atomic_requests.add(using)
-    except AttributeError:
-        view._non_atomic_requests = set([using])
-    return view
-
-# TODO:
-def non_atomic_requests(using=None):
-    if callable(using):
-        return _non_atomic_requests(using, DEFAULT_DB_ALIAS)
-    else:
-        if using is None:
-            using = DEFAULT_DB_ALIAS
-        return lambda view: _non_atomic_requests(view, using)
 
 
 ############################################
@@ -522,17 +416,16 @@ class Transaction(object):
     autocommit, commit_on_success, and commit_manually contain the
     implementations of entering and exiting.
     """
-    def __init__(self, entering, exiting, using, connection=None):
+    def __init__(self, entering, exiting, connection):
         self.entering = entering
         self.exiting = exiting
-        self.using = using
         self.connection = connection
 
     def __enter__(self):
-        self.entering(self.using, connection = self.connection)
+        self.entering(connection = self.connection)
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.exiting(exc_type, self.using, connection = self.connection)
+        self.exiting(exc_type, connection = self.connection)
 
     def __call__(self, func):
         @wraps(func)
@@ -542,7 +435,7 @@ class Transaction(object):
         return inner
 
 
-def _transaction_func(entering, exiting, using, connection=None):
+def _transaction_func(entering, exiting, connection):
     """
     Takes 3 things, an entering function (what to do to start this block of
     transaction management), an exiting function (what to do to end it, on both
@@ -556,18 +449,13 @@ def _transaction_func(entering, exiting, using, connection=None):
     # Note that although the first argument is *called* `using`, it
     # may actually be a function; @autocommit and @autocommit('foo')
     # are both allowed forms.
-    # TODO:
-    if not connection:
-        assert not using_gevent()
 
-    if using is None:
-        using = DEFAULT_DB_ALIAS
-    if callable(using):
-        return Transaction(entering, exiting, DEFAULT_DB_ALIAS, connection=connection)(using)
-    return Transaction(entering, exiting, using, connection=connection)
+    if callable(connection):
+        assert False
+    return Transaction(entering, exiting, connection)
 
 
-def autocommit(using=None, connection=None):
+def autocommit(connection):
     """
     Decorator that activates commit on save. This is Django's default behavior;
     this decorator is useful if you globally activated transaction management in
@@ -576,20 +464,16 @@ def autocommit(using=None, connection=None):
     warnings.warn("autocommit is deprecated in favor of set_autocommit.",
         RemovedInDjango18Warning, stacklevel=2)
 
-    # 如果使用gevent, 则不允许直接使用 @autocommit
-    if not connection:
-        assert not using_gevent()
+    def entering(connection):
+        enter_transaction_management(managed=False, connection=connection)
 
-    def entering(using, connection = None):
-        enter_transaction_management(managed=False, using=using, connection=connection)
+    def exiting(exc_type, connection):
+        leave_transaction_management(connection)
 
-    def exiting(exc_type, using, connection = None):
-        leave_transaction_management(using=using, connection=connection)
-
-    return _transaction_func(entering, exiting, using, connection=connection)
+    return _transaction_func(entering, exiting, connection)
 
 
-def commit_on_success(using=None, connection=None):
+def commit_on_success(connection):
     """
     This decorator activates commit on response. This way, if the view function
     runs successfully, a commit is made; if the viewfunc produces an exception,
@@ -597,31 +481,29 @@ def commit_on_success(using=None, connection=None):
     control in Web apps.
     """
     warnings.warn("commit_on_success is deprecated in favor of atomic.", RemovedInDjango18Warning, stacklevel=2)
-    if not connection:
-        assert not using_gevent()
 
-    def entering(using, connection=None):
-        enter_transaction_management(using=using, connection=connection)
+    def entering(connection):
+        enter_transaction_management(connection)
 
-    def exiting(exc_type, using, connection=None):
+    def exiting(exc_type, connection):
         try:
             if exc_type is not None:
-                if is_dirty(using=using, connection=connection):
-                    rollback(using=using, connection=connection)
+                if is_dirty(connection):
+                    rollback(connection)
             else:
-                if is_dirty(using=using, connection=connection):
+                if is_dirty(connection):
                     try:
-                        commit(using=using, connection=connection)
+                        commit(connection)
                     except:
-                        rollback(using=using, connection=connection)
+                        rollback(connection)
                         raise
         finally:
-            leave_transaction_management(using=using, connection=connection)
+            leave_transaction_management(connection)
 
-    return _transaction_func(entering, exiting, using, connection=connection)
+    return _transaction_func(entering, exiting, connection)
 
 
-def commit_manually(using=None, connection=None):
+def commit_manually(connection):
     """
     Decorator that activates manual transaction control. It just disables
     automatic transaction control and doesn't do any commit/rollback of its
@@ -631,19 +513,16 @@ def commit_manually(using=None, connection=None):
     warnings.warn("commit_manually is deprecated in favor of set_autocommit.",
         RemovedInDjango18Warning, stacklevel=2)
 
-    if not connection:
-        assert not using_gevent()
+    def entering(connection):
+        enter_transaction_management(connection)
 
-    def entering(using, connection):
-        enter_transaction_management(using=using, connection=connection)
+    def exiting(exc_type, connection):
+        leave_transaction_management(connection)
 
-    def exiting(exc_type, using, connection):
-        leave_transaction_management(using=using, connection=connection)
-
-    return _transaction_func(entering, exiting, using, connection=connection)
+    return _transaction_func(entering, exiting, connection)
 
 
-def commit_on_success_unless_managed(using=None, savepoint=False, connection=None):
+def commit_on_success_unless_managed(connection, savepoint=False):
     """
     Transitory API to preserve backwards-compatibility while refactoring.
 
@@ -654,17 +533,13 @@ def commit_on_success_unless_managed(using=None, savepoint=False, connection=Non
     Unlike atomic, savepoint defaults to False because that's closer to the
     legacy behavior.
     """
-    if not connection:
-        assert not using_gevent()
-
-    connection = connection or get_connection(using)
     if connection.get_autocommit() or connection.in_atomic_block:
-        return atomic(using, savepoint, connection=connection)
+        return atomic(savepoint, connection)
     else:
-        def entering(using, connection=None):
+        def entering(connection):
             pass
 
-        def exiting(exc_type, using, connection):
-            set_dirty(using=using, connection=connection)
+        def exiting(exc_type, connection):
+            set_dirty(connection)
 
-        return _transaction_func(entering, exiting, using, connection=connection)
+        return _transaction_func(entering, exiting, connection)

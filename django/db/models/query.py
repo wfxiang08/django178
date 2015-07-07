@@ -5,7 +5,6 @@ The main QuerySet implementation. This provides the public API for the ORM.
 from collections import deque
 import copy
 import sys
-from django import using_gevent
 
 from django.conf import settings
 from django.core import exceptions
@@ -49,10 +48,11 @@ class QuerySet(object):
     Represents a lazy database lookup for a set of objects.
     """
 
-    def __init__(self, model=None, query=None, using=None, hints=None, connection=None):
+    def __init__(self, model=None, query=None, hints=None, connection=None):
         self.model = model
-        self._db = using
         self._hints = hints or {}
+        self.connection = connection
+
         self.query = query or sql.Query(self.model)
         self._result_cache = None
         self._sticky_filter = False
@@ -61,8 +61,7 @@ class QuerySet(object):
         self._prefetch_done = False
         self._known_related_objects = {}        # {rel_field, {pk: rel_obj}}
 
-        assert connection or (not using_gevent())
-        self.connection = connection
+
 
     def as_manager(cls):
         # Address the circular dependency between `Queryset` and `Manager`.
@@ -261,15 +260,14 @@ class QuerySet(object):
             model_cls = deferred_class_factory(self.model, skip)
 
         # Cache db and model outside the loop
-        db = self.db
         model = self.model
-        compiler = self.query.get_compiler(using=db)
+        compiler = self.query.get_compiler(connection=self.connection)
         if fill_cache:
             klass_info = get_klass_info(model, max_depth=max_depth,
                                         requested=requested, only_load=only_load)
         for row in compiler.results_iter():
             if fill_cache:
-                obj, _ = get_cached_row(row, index_start, db, klass_info,
+                obj, _ = get_cached_row(row, index_start, self.connection, klass_info,
                                         offset=len(aggregate_select))
             else:
                 # Omit aggregates in object creation.
@@ -279,8 +277,6 @@ class QuerySet(object):
                 else:
                     obj = model(*row_data)
 
-                # Store the source database of the object
-                obj._state.db = db
                 # This object came from the database; it's not being added.
                 obj._state.adding = False
 
@@ -327,7 +323,7 @@ class QuerySet(object):
         for (alias, aggregate_expr) in kwargs.items():
             query.add_aggregate(aggregate_expr, self.model, alias,
                                 is_summary=True)
-        return query.get_aggregation(using=self.db, force_subq=force_subq)
+        return query.get_aggregation(force_subq=force_subq)
 
     def count(self):
         """
@@ -340,7 +336,7 @@ class QuerySet(object):
         if self._result_cache is not None:
             return len(self._result_cache)
 
-        return self.query.get_count(using=self.db)
+        return self.query.get_count(self.connection)
 
     def get(self, *args, **kwargs):
         """
@@ -376,8 +372,8 @@ class QuerySet(object):
         """
         obj = self.model(**kwargs)
         self._for_write = True
-        # obj.save(force_insert=True, using=self.db, connection=self.connection)
-        obj.save(force_insert=True, using=self.db, connection=self.connection)
+        # obj.save(force_insert=True, connection=self.connection)
+        obj.save(force_insert=True, connection=self.connection)
         return obj
 
     def bulk_create(self, objs, batch_size=None):
@@ -406,7 +402,7 @@ class QuerySet(object):
         connection = self.connection or connections[self.db]
 
         fields = self.model._meta.local_concrete_fields
-        with transaction.commit_on_success_unless_managed(using=self.db, connection=connection):
+        with transaction.commit_on_success_unless_managed(connection=connection):
             if (connection.features.can_combine_inserts_with_and_without_auto_increment_pk
                     and self.model._meta.has_auto_field):
                 self._batched_insert(objs, fields, batch_size)
@@ -452,8 +448,8 @@ class QuerySet(object):
         for k, v in six.iteritems(defaults):
             setattr(obj, k, v)
 
-        with transaction.atomic(using=self.db, connection = self.connection):
-            obj.save(using=self.db, connection = self.connection)
+        with transaction.atomic(connection = self.connection):
+            obj.save(connection = self.connection)
         return obj, False
 
     def _create_object_from_params(self, lookup, params):
@@ -463,8 +459,8 @@ class QuerySet(object):
         """
         obj = self.model(**params)
         try:
-            with transaction.atomic(using=self.db, connection = self.connection):
-                obj.save(force_insert=True, using=self.db, connection = self.connection)
+            with transaction.atomic(self.connection):
+                obj.save(force_insert=True, connection = self.connection)
             return obj, True
         except IntegrityError:
             exc_info = sys.exc_info()
@@ -562,7 +558,7 @@ class QuerySet(object):
         del_query.query.select_related = False
         del_query.query.clear_ordering(force_empty=True)
 
-        collector = Collector(using=del_query.db, connection = self.connection)
+        collector = Collector(self.connection)
         collector.collect(del_query)
         collector.delete()
 
@@ -571,12 +567,12 @@ class QuerySet(object):
     delete.alters_data = True
     delete.queryset_only = True
 
-    def _raw_delete(self, using, connection = None):
+    def _raw_delete(self, connection):
         """
         Deletes objects found from the given queryset in single direct SQL
         query. No signals are sent, and there is no protection for cascades.
         """
-        sql.DeleteQuery(self.model).delete_qs(self, using, connection=connection)
+        sql.DeleteQuery(self.model).delete_qs(self, connection)
     _raw_delete.alters_data = True
 
     def update(self, **kwargs):
@@ -589,7 +585,7 @@ class QuerySet(object):
         self._for_write = True
         query = self.query.clone(sql.UpdateQuery)
         query.add_update_values(kwargs)
-        with transaction.commit_on_success_unless_managed(using=self.db, connection=self.connection):
+        with transaction.commit_on_success_unless_managed(connection=self.connection):
             rows = query.get_compiler(self.db, connection=self.connection).execute_sql(CURSOR)
         self._result_cache = None
         return rows
@@ -613,7 +609,7 @@ class QuerySet(object):
 
     def exists(self):
         if self._result_cache is None:
-            return self.query.has_results(using=self.db)
+            return self.query.has_results(self.connection)
         return bool(self._result_cache)
 
     def _prefetch_related_objects(self):
@@ -625,12 +621,9 @@ class QuerySet(object):
     # PUBLIC METHODS THAT RETURN A QUERYSET SUBCLASS #
     ##################################################
 
-    def raw(self, raw_query, params=None, translations=None, using=None):
-        if using is None:
-            using = self.db
-        return RawQuerySet(raw_query, model=self.model,
-                params=params, translations=translations,
-                using=using)
+    def raw(self, connection, raw_query, params=None, translations=None):
+        return RawQuerySet(connection, raw_query, model=self.model,
+                params=params, translations=translations)
 
     def values(self, *fields):
         return self._clone(klass=ValuesQuerySet, setup=True, _fields=fields)
@@ -919,17 +912,15 @@ class QuerySet(object):
     # PRIVATE METHODS #
     ###################
 
-    def _insert(self, objs, fields, return_id=False, raw=False, using=None, connection=None):
+    def _insert(self, objs, fields, return_id=False, raw=False, connection=None):
         """
         Inserts a new record for the given model. This provides an interface to
         the InsertQuery class and is how Model.save() is implemented.
         """
         self._for_write = True
-        if using is None:
-            using = self.db
         query = sql.InsertQuery(self.model)
         query.insert_values(fields, objs, raw=raw)
-        return query.get_compiler(using=using, connection=connection).execute_sql(return_id)
+        return query.get_compiler(connection=connection).execute_sql(return_id)
     _insert.alters_data = True
     _insert.queryset_only = False
 
@@ -948,7 +939,7 @@ class QuerySet(object):
         for batch in [objs[i:i + batch_size]
                       for i in range(0, len(objs), batch_size)]:
             self.model._base_manager._insert(batch, fields=fields,
-                                             using=self.db, connection=connection)
+                                             connection=connection)
 
     def _clone(self, klass=None, setup=False, **kwargs):
         if klass is None:
@@ -965,7 +956,7 @@ class QuerySet(object):
         query = self.query.clone()
         if self._sticky_filter:
             query.filter_is_sticky = True
-        c = klass(model=self.model, query=query, using=self._db, hints=self._hints, connection=self.connection)
+        c = klass(model=self.model, query=query, hints=self._hints, connection=self.connection)
         c._for_write = self._for_write
         c._prefetch_related_lookups = self._prefetch_related_lookups[:]
         c._known_related_objects = self._known_related_objects
@@ -1416,8 +1407,7 @@ def get_klass_info(klass, max_depth=0, cur_depth=0, requested=None,
     return klass, field_names, field_count, related_fields, reverse_related_fields, pk_idx
 
 
-def get_cached_row(row, index_start, using, klass_info, offset=0,
-                   parent_data=(), connection=None):
+def get_cached_row(row, index_start, connection, klass_info, offset=0, parent_data=()):
     """
     Helper function that recursively returns an object with the specified
     related attributes already populated.
@@ -1446,9 +1436,6 @@ def get_cached_row(row, index_start, using, klass_info, offset=0,
     # connection interprets empty strings as nulls), then the related
     # object must be non-existent - set the relation to None.
 
-    assert connection or (not using_gevent())
-    connection = connection or connections[using]
-
     if (fields[pk_idx] is None or
         (connection.features.interprets_empty_strings_as_nulls and
          fields[pk_idx] == '')):
@@ -1463,7 +1450,6 @@ def get_cached_row(row, index_start, using, klass_info, offset=0,
         obj = klass(*fields)
     # If an object was retrieved, set the database state.
     if obj:
-        obj._state.db = using
         obj._state.adding = False
 
     # Instantiate related fields
@@ -1472,7 +1458,7 @@ def get_cached_row(row, index_start, using, klass_info, offset=0,
     # select_related() fields
     for f, klass_info in related_fields:
         # Recursively retrieve the data for the related object
-        cached_row = get_cached_row(row, index_end, using, klass_info)
+        cached_row = get_cached_row(row, index_end, connection, klass_info)
         # If the recursive descent found an object, populate the
         # descriptor caches relevant to the object
         if cached_row:
@@ -1496,8 +1482,7 @@ def get_cached_row(row, index_start, using, klass_info, offset=0,
             if rel_model is not None and isinstance(obj, rel_model):
                 parent_data.append((rel_field, getattr(obj, rel_field.attname)))
         # Recursively retrieve the data for the related object
-        cached_row = get_cached_row(row, index_end, using, klass_info,
-                                   parent_data=parent_data)
+        cached_row = get_cached_row(row, index_end, klass_info, parent_data=parent_data)
         # If the recursive descent found an object, populate the
         # descriptor caches relevant to the object
         if cached_row:
@@ -1527,18 +1512,17 @@ class RawQuerySet(object):
     Provides an iterator which converts the results of raw SQL queries into
     annotated model instances.
     """
-    def __init__(self, raw_query, model=None, query=None, params=None,
-            translations=None, using=None, hints=None, connection=None):
+    def __init__(self, connection, raw_query, model=None, query=None, params=None,
+            translations=None, hints=None):
         self.raw_query = raw_query
         self.model = model
-        self._db = using
+        self.connection = connection
         self._hints = hints or {}
-        self.query = query or sql.RawQuery(sql=raw_query, using=self.db, params=params)
+        self.query = query or sql.RawQuery(sql=raw_query, params=params)
         self.params = params or ()
         self.translations = translations or {}
 
-        assert connection or not using_gevent()
-        self.connection = connection
+
 
     def __iter__(self):
         # Mapping of attrnames to row column positions. Used for constructing
@@ -1549,10 +1533,8 @@ class RawQuerySet(object):
         # annotation fields.
         annotation_fields = []
 
-        # Cache some things for performance reasons outside the loop.
-        assert self.connection or (not using_gevent())
 
-        db = self.db
+        db = self.connection
         connection = self.connection or connections[db]
 
         compiler = connection.ops.compiler('SQLCompiler')(
@@ -1625,19 +1607,14 @@ class RawQuerySet(object):
     def __getitem__(self, k):
         return list(self)[k]
 
-    @property
-    def db(self):
-        "Return the database that will be used if this query is executed now"
-        return self._db or router.db_for_read(self.model, **self._hints)
 
-    def using(self, alias):
+    def using(self, connection):
         """
         Selects which database this Raw QuerySet should execute its query against.
         """
-        return RawQuerySet(self.raw_query, model=self.model,
-                query=self.query.clone(using=alias),
-                params=self.params, translations=self.translations,
-                using=alias)
+        return RawQuerySet(connection, self.raw_query, model=self.model,
+                query=self.query.clone(connection),
+                params=self.params, translations=self.translations)
 
     @property
     def columns(self):
@@ -1665,9 +1642,7 @@ class RawQuerySet(object):
         A dict mapping column names to model field names.
         """
         if not hasattr(self, '_model_fields'):
-            assert self.connection or not using_gevent()
-            connection = self.connection or connections[self.db]
-            converter = connection.introspection.table_name_converter
+            converter = self.connection.introspection.table_name_converter
             self._model_fields = {}
             for field in self.model._meta.fields:
                 name, column = field.get_attname_column()

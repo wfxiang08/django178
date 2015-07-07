@@ -4,7 +4,7 @@ from operator import attrgetter
 
 from django.apps import apps
 from django.core import checks
-from django.db import connection, connections, router, transaction
+from django.db import connection, connections, router, transaction, get_cached_connection
 from django.db.backends import utils
 from django.db.models import signals, Q
 from django.db.models.deletion import SET_NULL, SET_DEFAULT, CASCADE
@@ -1707,17 +1707,17 @@ class ForeignKey(ForeignObject):
         if value is None:
             return
 
-        using = router.db_for_read(model_instance.__class__, instance=model_instance)
-        qs = self.rel.to._default_manager.using(using).filter(
-            **{self.rel.field_name: value}
-        )
-        qs = qs.complex_filter(self.get_limit_choices_to())
-        if not qs.exists():
-            raise exceptions.ValidationError(
-                self.error_messages['invalid'],
-                code='invalid',
-                params={'model': self.rel.to._meta.verbose_name, 'pk': value},
+        with get_cached_connection() as connection:
+            qs = self.rel.to._default_manager.using(connection).filter(
+                **{self.rel.field_name: value}
             )
+            qs = qs.complex_filter(self.get_limit_choices_to())
+            if not qs.exists():
+                raise exceptions.ValidationError(
+                    self.error_messages['invalid'],
+                    code='invalid',
+                    params={'model': self.rel.to._meta.verbose_name, 'pk': value},
+                )
 
     def get_attname(self):
         return '%s_id' % self.name
