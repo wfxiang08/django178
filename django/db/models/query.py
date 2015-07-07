@@ -9,7 +9,7 @@ from django import using_gevent
 
 from django.conf import settings
 from django.core import exceptions
-from django.db import connections, router, transaction, IntegrityError
+from django.db import connections, router, transaction, IntegrityError, DEFAULT_DB_ALIAS
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields import AutoField, Empty
 from django.db.models.query_utils import (Q, select_related_descend,
@@ -376,7 +376,7 @@ class QuerySet(object):
         """
         obj = self.model(**kwargs)
         self._for_write = True
-        obj.save(force_insert=True, using=self.db)
+        obj.save(force_insert=True, using=self.db, connection=self.connection)
         return obj
 
     def bulk_create(self, objs, batch_size=None):
@@ -881,12 +881,12 @@ class QuerySet(object):
         clone.query.add_immediate_loading(fields)
         return clone
 
-    def using(self, alias, connection=None):
+    def using(self, alias = None, connection=None):
         """
         Selects which database this QuerySet should execute its query against.
         """
         clone = self._clone()
-        clone._db = alias
+        clone._db = alias or DEFAULT_DB_ALIAS
         clone.connection = connection
         return clone
 

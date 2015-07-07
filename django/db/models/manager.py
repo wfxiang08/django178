@@ -90,6 +90,7 @@ class BaseManager(six.with_metaclass(RenameManagerMethods)):
     def _get_queryset_methods(cls, queryset_class):
         def create_method(name, method):
             def manager_method(self, *args, **kwargs):
+                # print "args: ", args, ", kwargs: ", kwargs
                 return getattr(self.get_queryset(), name)(*args, **kwargs)
             manager_method.__name__ = method.__name__
             manager_method.__doc__ = method.__doc__

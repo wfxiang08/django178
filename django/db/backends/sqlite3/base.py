@@ -372,6 +372,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def get_new_connection(self, conn_params):
         conn = Database.connect(**conn_params)
+        print "Sqlite Conn: ", conn
         conn.create_function("django_date_extract", 2, _sqlite_date_extract)
         conn.create_function("django_date_trunc", 2, _sqlite_date_trunc)
         conn.create_function("django_datetime_extract", 3, _sqlite_datetime_extract)

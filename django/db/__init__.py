@@ -54,9 +54,18 @@ class DefaultConnectionProxy(object):
 
 # 间接读取: connections[DEFAULT_DB_ALIAS]
 connection = DefaultConnectionProxy()
-def get_connection(alias = None):
-    # 是否需要添加cache呢?
+
+def get_cached_connection(alias = None):
+    """
+        创建一个新的connection
+    """
     return connections.get_connection(alias)
+
+def close_cached_connection(connection):
+    """
+        关闭connection
+    """
+    connections.close_connection(connection)
 
 
 # class DefaultBackendProxy(object):
@@ -92,6 +101,7 @@ def close_connection(**kwargs):
         # connection state will be cleaned up.
         transaction.abort(conn)
         connections[conn].close()
+
 
 
 # Register an event to reset saved queries when a Django request is started.

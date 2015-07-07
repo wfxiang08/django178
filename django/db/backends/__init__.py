@@ -88,13 +88,12 @@ class BaseDatabaseWrapper(object):
         return hash(self.alias)
 
 
-    # def __enter__(self):
-    #     pass
+    def __enter__(self):
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.connection_handler:
             self.connection_handler.close_connection(self)
-
 
 
     @property

@@ -177,8 +177,7 @@ class RelatedField(Field):
         # rel_opts.object_name == "Target"
         rel_name = self.related.get_accessor_name()  # i. e. "model_set"
         rel_query_name = self.related_query_name()  # i. e. "model"
-        field_name = "%s.%s" % (opts.object_name,
-            self.name)  # i. e. "Model.field"
+        field_name = "%s.%s" % (opts.object_name, self.name)  # i. e. "Model.field"
 
         # Check clashes between accessor or reverse query name of `field`
         # and any other field name -- i. e. accessor for Model.foreign is
@@ -641,6 +640,7 @@ class ReverseSingleRelatedObjectDescriptor(six.with_metaclass(RenameRelatedObjec
 
 
 def create_foreign_related_manager(superclass, rel_field, rel_model):
+
     class RelatedManager(superclass):
         def __init__(self, instance):
             super(RelatedManager, self).__init__()
@@ -660,8 +660,10 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
             try:
                 return self.instance._prefetched_objects_cache[rel_field.related_query_name()]
             except (AttributeError, KeyError):
+
                 db = self._db or router.db_for_read(self.model, instance=self.instance)
-                empty_strings_as_null = connections[db].features.interprets_empty_strings_as_nulls
+                connection = connections[db]
+                empty_strings_as_null = connection.features.interprets_empty_strings_as_nulls
                 qs = super(RelatedManager, self).get_queryset()
                 qs._add_hints(instance=self.instance)
                 if self._db:

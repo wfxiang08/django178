@@ -34,7 +34,7 @@ def _simple_domain_name_validator(value):
 
 class SiteManager(models.Manager):
 
-    def get_current(self):
+    def get_current(self, connection=None):
         """
         Returns the current ``Site`` based on the SITE_ID in the
         project's settings. The ``Site`` object is cached the first
@@ -51,7 +51,10 @@ class SiteManager(models.Manager):
         try:
             current_site = SITE_CACHE[sid]
         except KeyError:
-            current_site = self.get(pk=sid)
+            if connection:
+                current_site = self.using(connection=connection).get(pk=sid)
+            else:
+                current_site = self.get(pk=sid)
             SITE_CACHE[sid] = current_site
         return current_site
 

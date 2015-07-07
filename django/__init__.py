@@ -1,3 +1,4 @@
+# -*- coding:utf-8 -*-
 VERSION = (1, 7, 8, 'final', 0)
 
 

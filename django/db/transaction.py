@@ -174,6 +174,12 @@ def set_autocommit(autocommit, using=None, connection=None):
     """
     Set the autocommit status of the connection.
     """
+    # set_autocommit(True, connection)
+    from django.db.backends import BaseDatabaseWrapper
+    if isinstance(using, BaseDatabaseWrapper):
+        connection = using
+        using = None
+
     if connection:
         connection.set_autocommit(autocommit)
     else:
@@ -185,6 +191,11 @@ def commit(using=None, connection=None):
     """
     Commits a transaction and resets the dirty flag.
     """
+    from django.db.backends import BaseDatabaseWrapper
+    if isinstance(using, BaseDatabaseWrapper):
+        connection = using
+        using = None
+
     if connection:
         connection.commit()
     else:

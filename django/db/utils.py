@@ -254,6 +254,7 @@ class ConnectionHandler(object):
         backend = load_backend(db['ENGINE'])
 
         conn = backend.DatabaseWrapper(db, alias)
+        # print "Alias: ", alias, ", conn: ", conn
         return conn
 
     def get_connection(self, alias=None):
@@ -261,11 +262,13 @@ class ConnectionHandler(object):
             获取一个独立的connection, 如果pool中不存在，则直接返回
         """
         alias = alias or DEFAULT_DB_ALIAS
-        connection_list = self.pooled_connections.get(alias)
+        connection_list = self.pooled_connections[alias]
         if not connection_list:
             connection = self._get_new_connection(alias)
         else:
             connection = connection_list.pop(0)
+
+        # print "connection: ", connection
 
         connection.connection_handler = self
         return connection
@@ -275,7 +278,7 @@ class ConnectionHandler(object):
             关闭数据库
         """
         alias = connection.alias
-        connection_list = self.pooled_connections.get(alias)
+        connection_list = self.pooled_connections[alias]
         # connection_list = []
         max_conn = settings.ALIAS_2_MAX_CONNECT_NUM.get(alias, 10)
 
