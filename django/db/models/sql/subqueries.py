@@ -82,7 +82,7 @@ class DeleteQuery(Query):
                 values = innerq
             self.where = self.where_class()
             self.add_q(Q(pk__in=values))
-        self.get_compiler(using).execute_sql(NO_RESULTS)
+        self.get_compiler(connection).execute_sql(NO_RESULTS)
 
 
 class UpdateQuery(Query):
@@ -281,5 +281,5 @@ class AggregateQuery(Query):
 
     compiler = 'SQLAggregateCompiler'
 
-    def add_subquery(self, query, using, connection=None):
-        self.subquery, self.sub_params = query.get_compiler(using, connection=connection).as_sql(with_col_aliases=True)
+    def add_subquery(self, query, connection):
+        self.subquery, self.sub_params = query.get_compiler(connection).as_sql(with_col_aliases=True)

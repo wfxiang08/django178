@@ -648,6 +648,8 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
             self.core_filters = {'%s__exact' % rel_field.name: instance}
             self.model = rel_model
 
+            self.connection = None
+
         def __call__(self, **kwargs):
             # We use **kwargs rather than a kwarg argument to enforce the
             # `manager='manager_name'` syntax.
@@ -661,13 +663,12 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
                 return self.instance._prefetched_objects_cache[rel_field.related_query_name()]
             except (AttributeError, KeyError):
 
-                db = self._db or router.db_for_read(self.model, instance=self.instance)
-                connection = connections[db]
-                empty_strings_as_null = connection.features.interprets_empty_strings_as_nulls
+                empty_strings_as_null = self.connection.features.interprets_empty_strings_as_nulls
                 qs = super(RelatedManager, self).get_queryset()
                 qs._add_hints(instance=self.instance)
-                if self._db:
-                    qs = qs.using(self._db)
+                if self.connection:
+                    qs = qs.using(self.connection)
+
                 qs = qs.filter(**self.core_filters)
                 for field in rel_field.foreign_related_fields:
                     val = getattr(self.instance, field.attname)
@@ -681,7 +682,7 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
                 queryset = super(RelatedManager, self).get_queryset()
 
             queryset._add_hints(instance=instances[0])
-            queryset = queryset.using(queryset._db or self._db)
+            queryset = queryset.using(queryset.connection or self.connection)
 
             rel_obj_attr = rel_field.get_local_related_value
             instance_attr = rel_field.get_foreign_related_value
@@ -699,9 +700,8 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
 
         def add(self, *objs):
             objs = list(objs)
-            db = router.db_for_write(self.model, instance=self.instance)
             with transaction.commit_on_success_unless_managed(
-                    using=db, savepoint=False):
+                    self.connection, savepoint=False):
                 for obj in objs:
                     if not isinstance(obj, self.model):
                         raise TypeError("'%s' instance expected, got %r" %
@@ -751,12 +751,12 @@ def create_foreign_related_manager(superclass, rel_field, rel_model):
             clear.alters_data = True
 
             def _clear(self, queryset, bulk):
-                db = router.db_for_write(self.model, instance=self.instance)
-                queryset = queryset.using(db)
+                queryset = queryset.using(self.connection)
+
                 if bulk:
                     queryset.update(**{rel_field.name: None})
                 else:
-                    with transaction.commit_on_success_unless_managed(using=db, savepoint=False):
+                    with transaction.commit_on_success_unless_managed(self.connection, savepoint=False):
                         for obj in queryset:
                             setattr(obj, rel_field.name, None)
                             obj.save(update_fields=[rel_field.name])
@@ -888,10 +888,7 @@ def create_many_related_manager(superclass, rel):
                 qs = super(ManyRelatedManager, self).get_queryset()
                 qs._add_hints(instance=self.instance)
 
-                if self.connection:
-                    qs = qs.using(connection=connection)
-                elif self._db:
-                    qs = qs.using(self._db)
+                qs = qs.using(connection=self.connection)
                 return qs._next_is_sticky().filter(**self.core_filters)
 
         def get_prefetch_queryset(self, instances, queryset=None):
@@ -899,7 +896,7 @@ def create_many_related_manager(superclass, rel):
                 queryset = super(ManyRelatedManager, self).get_queryset()
 
             queryset._add_hints(instance=instances[0])
-            queryset = queryset.using(self.connection or queryset._db or self._db)
+            queryset = queryset.using(self.connection)
 
             query = {'%s__in' % self.query_field_name: instances}
             queryset = queryset._next_is_sticky().filter(**query)
@@ -949,16 +946,15 @@ def create_many_related_manager(superclass, rel):
         remove.alters_data = True
 
         def clear(self):
-            db = router.db_for_write(self.through, instance=self.instance)
 
             signals.m2m_changed.send(sender=self.through, action="pre_clear", instance=self.instance, reverse=self.reverse,
-                                     model=self.model, pk_set=None, using=db)
+                                     model=self.model, pk_set=None, connection=self.connection)
 
-            filters = self._build_remove_filters(super(ManyRelatedManager, self).get_queryset().using(db))
-            self.through._default_manager.using(self.connection or db).filter(filters).delete()
+            filters = self._build_remove_filters(super(ManyRelatedManager, self).get_queryset().using(self.connection))
+            self.through._default_manager.using(self.connection).filter(filters).delete()
 
             signals.m2m_changed.send(sender=self.through, action="post_clear", instance=self.instance, reverse=self.reverse,
-                                     model=self.model, pk_set=None, using=db)
+                                     model=self.model, pk_set=None, connection=self.connection)
         clear.alters_data = True
 
         def create(self, **kwargs):
@@ -1027,8 +1023,7 @@ def create_many_related_manager(superclass, rel):
                         )
                     else:
                         new_ids.add(obj)
-                db = router.db_for_write(self.through, instance=self.instance)
-                vals = self.through._default_manager.using(db, connection=self.connection).values_list(target_field_name, flat=True)
+                vals = self.through._default_manager.using(self.connection).values_list(target_field_name, flat=True)
                 vals = vals.filter(**{
                     source_field_name: self.related_val[0],
                     '%s__in' % target_field_name: new_ids,
@@ -1040,9 +1035,9 @@ def create_many_related_manager(superclass, rel):
                     # duplicate data row for symmetrical reverse entries.
                     signals.m2m_changed.send(sender=self.through, action='pre_add',
                         instance=self.instance, reverse=self.reverse,
-                        model=self.model, pk_set=new_ids, using=db)
+                        model=self.model, pk_set=new_ids, connection=self.connection)
                 # Add the ones that aren't there already
-                self.through._default_manager.using(db, connection=self.connection).bulk_create([
+                self.through._default_manager.using(self.connection).bulk_create([
                     self.through(**{
                         '%s_id' % source_field_name: self.related_val[0],
                         '%s_id' % target_field_name: obj_id,
@@ -1055,7 +1050,7 @@ def create_many_related_manager(superclass, rel):
                     # duplicate data row for symmetrical reverse entries.
                     signals.m2m_changed.send(sender=self.through, action='post_add',
                         instance=self.instance, reverse=self.reverse,
-                        model=self.model, pk_set=new_ids, using=db)
+                        model=self.model, pk_set=new_ids, connection=self.connection)
 
         def _remove_items(self, source_field_name, target_field_name, *objs):
             # source_field_name: the PK colname in join table for the source object
@@ -1078,19 +1073,19 @@ def create_many_related_manager(superclass, rel):
             # Send a signal to the other end if need be.
             signals.m2m_changed.send(sender=self.through, action="pre_remove",
                 instance=self.instance, reverse=self.reverse,
-                model=self.model, pk_set=old_ids, using=db)
+                model=self.model, pk_set=old_ids, connection=self.connection)
             target_model_qs = super(ManyRelatedManager, self).get_queryset()
             if target_model_qs._has_filters():
-                old_vals = target_model_qs.using(db, connection=self.connection).filter(**{
+                old_vals = target_model_qs.using(self.connection).filter(**{
                     '%s__in' % self.target_field.related_field.attname: old_ids})
             else:
                 old_vals = old_ids
             filters = self._build_remove_filters(old_vals)
-            self.through._default_manager.using(db, connection=self.connection).filter(filters).delete()
+            self.through._default_manager.using(self.connection).filter(filters).delete()
 
             signals.m2m_changed.send(sender=self.through, action="post_remove",
                 instance=self.instance, reverse=self.reverse,
-                model=self.model, pk_set=old_ids, using=db)
+                model=self.model, pk_set=old_ids, connection=self.connection)
 
     return ManyRelatedManager
 
@@ -1770,7 +1765,7 @@ class ForeignKey(ForeignObject):
                              (self.name, self.rel.to))
         defaults = {
             'form_class': forms.ModelChoiceField,
-            'queryset': self.rel.to._default_manager.using(db),
+            'queryset': self.rel.to._default_manager.using(self.connection),
             'to_field_name': self.rel.field_name,
         }
         defaults.update(kwargs)
@@ -2309,7 +2304,7 @@ class ManyToManyField(RelatedField):
         db = kwargs.pop('using', None)
         defaults = {
             'form_class': forms.ModelMultipleChoiceField,
-            'queryset': self.rel.to._default_manager.using(db),
+            'queryset': self.rel.to._default_manager.using(self.connection),
         }
         defaults.update(kwargs)
         # If initial is passed in, it's a list of related objects, but the

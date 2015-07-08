@@ -8,15 +8,12 @@ all about the internals of models in order to get the information it needs.
 """
 from string import ascii_uppercase
 from itertools import count, product
-
 from collections import OrderedDict
 import copy
 import warnings
-from django import using_gevent
 
 from django.core.exceptions import FieldError
 from django.db import connections, DEFAULT_DB_ALIAS
-from django.conf import settings
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.aggregates import refs_aggregate
 from django.db.models.expressions import ExpressionNode
@@ -35,6 +32,7 @@ from django.utils.deprecation import RemovedInDjango19Warning
 from django.utils.encoding import force_text
 from django.utils.tree import Node
 
+
 __all__ = ['Query', 'RawQuery']
 
 
@@ -43,10 +41,9 @@ class RawQuery(object):
     A single raw SQL query
     """
 
-    def __init__(self, sql, using, params=None, connection=None):
+    def __init__(self, sql, connection, params=None):
         self.params = params or ()
         self.sql = sql
-        self.using = using
         self.connection = connection
 
         self.cursor = None
@@ -57,8 +54,8 @@ class RawQuery(object):
         self.extra_select = {}
         self.aggregate_select = {}
 
-    def clone(self, using):
-        return RawQuery(self.sql, using, params=self.params)
+    def clone(self, connection):
+        return RawQuery(self.sql, connection, params=self.params)
 
     def convert_values(self, value, field, connection):
         """Convert the database-returned value into a type that is consistent
@@ -72,8 +69,8 @@ class RawQuery(object):
     def get_columns(self):
         if self.cursor is None:
             self._execute_query()
-        connection = self.connection or connections[self.using]
-        converter = connection.introspection.table_name_converter
+
+        converter = self.connection.introspection.table_name_converter
         return [converter(column_meta[0])
                 for column_meta in self.cursor.description]
 
@@ -82,8 +79,7 @@ class RawQuery(object):
         # This could be optimized with a cache at the expense of RAM.
         self._execute_query()
 
-        connection = self.connection or connections[self.using]
-        if not connection.features.can_use_chunked_reads:
+        if not self.connection.features.can_use_chunked_reads:
             # If the database can't use chunked reads we need to make sure we
             # evaluate the entire query up front.
             result = list(self.cursor)
@@ -95,8 +91,7 @@ class RawQuery(object):
         return "<RawQuery: %r>" % (self.sql % tuple(self.params))
 
     def _execute_query(self):
-        connection = self.connection or connections[self.using]
-        self.cursor = connection.cursor()
+        self.cursor = self.connection.cursor()
         self.cursor.execute(self.sql, self.params)
 
 
@@ -353,7 +348,7 @@ class Query(object):
         clone.change_aliases(change_map)
         return clone
 
-    def get_aggregation(self, using, force_subq=False, connection=None):
+    def get_aggregation(self, connection, force_subq=False):
         """
         Returns the dictionary with the values of the existing aggregations.
         """
@@ -386,7 +381,7 @@ class Query(object):
                     del obj.aggregate_select[alias]
 
             try:
-                query.add_subquery(obj, using, connection=connection)
+                query.add_subquery(obj, connection)
             except EmptyResultSet:
                 return dict(
                     (alias, None)
@@ -405,17 +400,17 @@ class Query(object):
         query.select_related = False
         query.related_select_cols = []
 
-        result = query.get_compiler(using).execute_sql(SINGLE)
+        result = query.get_compiler(connection).execute_sql(SINGLE)
         if result is None:
             result = [None for q in query.aggregate_select.items()]
 
         return dict(
-            (alias, self.resolve_aggregate(val, aggregate, connection=connections[using]))
+            (alias, self.resolve_aggregate(val, aggregate, connection=connection))
             for (alias, aggregate), val
             in zip(query.aggregate_select.items(), result)
         )
 
-    def get_count(self, using):
+    def get_count(self, connection):
         """
         Performs a COUNT() query using the current filter constraints.
         """
@@ -431,7 +426,7 @@ class Query(object):
 
             obj = AggregateQuery(obj.model)
             try:
-                obj.add_subquery(subquery, using=using)
+                obj.add_subquery(subquery, connection)
             except EmptyResultSet:
                 # add_subquery evaluates the query, if it's an EmptyResultSet
                 # then there are can be no results, and therefore there the
@@ -439,7 +434,7 @@ class Query(object):
                 return 0
 
         obj.add_count_column()
-        number = obj.get_aggregation(using=using)[None]
+        number = obj.get_aggregation(connection)[None]
 
         # Apply offset and limit constraints manually, since using LIMIT/OFFSET
         # in SQL (in variants that provide them) doesn't change the COUNT

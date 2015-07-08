@@ -855,9 +855,7 @@ class TransactionTestCase(SimpleTestCase):
         return self.assertEqual(list(items), values, msg=msg)
 
     def assertNumQueries(self, num, func=None, *args, **kwargs):
-        using = kwargs.pop("using", DEFAULT_DB_ALIAS)
-        conn = connections[using]
-
+        conn = kwargs.pop("connection", None)
         context = _AssertNumQueriesContext(self, num, conn)
         if func is None:
             return context
